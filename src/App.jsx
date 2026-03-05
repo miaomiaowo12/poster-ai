@@ -263,6 +263,8 @@ function parsePrompt(prompt) {
   return { theme, platform }
 }
 
+const DOUBAO_API_KEY = 'ae46882e-2e69-4ab0-818f-07a25b4616c4'
+
 function App() {
   const [prompt, setPrompt] = useState('')
   const [title, setTitle] = useState('')
@@ -301,98 +303,6 @@ function App() {
     if (guideShown) { setShowGuide(false) }
   }, [])
 
-  // 实时更新海报
-  useEffect(() => {
-    if (!hasGenerated || !poster) return
-    if (!title.trim() && !content.trim() && !bgImage) return
-
-    const updateTimer = setTimeout(() => {
-      const styleKeys = Object.keys(STYLE_CONFIGS)
-      const styleToUse = selectedStyle || poster.style
-      const config = STYLE_CONFIGS[styleToUse]
-      const parsed = parsePrompt(prompt)
-      const decoration = config.decoration || 'geometric'
-      const sizeConfig = SIZES.find(s => s.id === selectedSize) || SIZES[0]
-      
-      // 如果风格变化，使用新风格的渐变色；否则保持原有渐变色
-      let gradient = poster.gradient
-      if (selectedStyle && selectedStyle !== poster.style) {
-        gradient = config.gradients[Math.floor(Math.random() * config.gradients.length)]
-      }
-      
-      const fontSize = 36
-      const themeEmojis = parsed.theme?.emojis || []
-      
-      // 如果风格变化，重新生成装饰元素
-      let decoConfig = poster.decoConfig
-      if (selectedStyle && selectedStyle !== poster.style) {
-        decoConfig = generateDecoConfig(decoration)
-      }
-      
-      const defaultElements = []
-      
-      if (title.trim()) { 
-        const titleSize = calculateTextBoxSize(title, fontSize)
-        defaultElements.push({ 
-          id: 'title', 
-          text: title, 
-          x: poster.textElements?.find(el => el.id === 'title')?.x || 50, 
-          y: poster.textElements?.find(el => el.id === 'title')?.y || 35, 
-          color: '#FFFFFF', 
-          fontSize, 
-          fontFamily: config.fonts[0], 
-          visible: true, 
-          rotation: 0, 
-          textAlign: 'center',
-          width: titleSize.width,
-          height: titleSize.height,
-          textStyle: config.textStyle
-        }) 
-      }
-      if (content.trim()) { 
-        const contentSize = calculateTextBoxSize(content, fontSize * 0.5)
-        defaultElements.push({ 
-          id: 'content', 
-          text: content, 
-          x: poster.textElements?.find(el => el.id === 'content')?.x || 50, 
-          y: poster.textElements?.find(el => el.id === 'content')?.y || 55, 
-          color: '#FFFFFF', 
-          fontSize: fontSize * 0.5, 
-          fontFamily: config.fonts[0], 
-          visible: true, 
-          rotation: 0, 
-          textAlign: 'center',
-          width: contentSize.width,
-          height: contentSize.height,
-          textStyle: config.textStyle
-        }) 
-      }
-      
-      const updatedPoster = { 
-        ...poster,
-        prompt, 
-        title, 
-        content, 
-        style: styleToUse, 
-        size: sizeConfig.id, 
-        gradient, 
-        decoration, 
-        decoConfig, 
-        bgImage,
-        emoji: selectedTemplate?.emoji || parsed.theme?.emoji, 
-        platformEmoji: selectedTemplate?.emoji || parsed.theme?.emoji || null,
-        themeEmojis, 
-        textElements: defaultElements, 
-        textStyle: config.textStyle,
-      }
-      
-      setPoster(updatedPoster)
-      setTextElements(defaultElements)
-    }, 300)
-
-    return () => clearTimeout(updateTimer)
-  }, [title, content, prompt, selectedStyle, selectedSize, bgImage, hasGenerated])
-
   const hideGuide = () => { setShowGuide(false); localStorage.setItem('guideShown', 'true') }
 
   const saveToHistory = (newPoster) => {
@@ -428,79 +338,148 @@ function App() {
   }
 
   const generatePoster = async () => {
-    if (!title.trim() && !content.trim() && !bgImage) { 
-      setError('请输入标题/文案或上传背景图')
+    if (!title.trim() && !content.trim() && !prompt.trim() && !bgImage) { 
+      setError('请输入标题、文案、AI提示词或上传背景图')
       setTimeout(() => setError(null), 3000)
       return 
     }
     setIsGenerating(true); setError(null)
-    await new Promise(resolve => setTimeout(resolve, 600))
+
     try {
-      const styleKeys = Object.keys(STYLE_CONFIGS)
-      const styleToUse = selectedStyle || styleKeys[Math.floor(Math.random() * styleKeys.length)]
-      const config = STYLE_CONFIGS[styleToUse]
-      const parsed = parsePrompt(prompt)
-      // 始终使用当前风格配置的装饰元素
-      const decoration = config.decoration || 'geometric'
+      // 构建AI生成海报的提示词
+      const styleName = selectedStyle ? STYLES.find(s => s.id === selectedStyle)?.name : '现代'
+      const sizeName = SIZES.find(s => s.id === selectedSize)?.name || '竖版'
+      const templateName = selectedTemplate?.name || ''
+      
+      let imagePrompt = ''
+      let requestBody = {}
+      
+      // 如果用户上传了背景图，使用图生图模式
+      if (bgImage) {
+        imagePrompt = `基于这张图片生成一张完整的${sizeName}海报，海报中需要包含文字内容`
+        
+        if (title.trim()) {
+          imagePrompt += `，标题文字为"${title}"`
+        }
+        if (content.trim()) {
+          imagePrompt += `，文案内容为"${content}"`
+        }
+        if (prompt.trim()) {
+          imagePrompt += `，${prompt}`
+        }
+        if (styleName) {
+          imagePrompt += `，${styleName}风格`
+        }
+        if (templateName) {
+          imagePrompt += `，${templateName}主题`
+        }
+        
+        imagePrompt += '，保持原图风格，高质量，专业设计，精美海报，文字清晰可读'
+        
+        // 准备图片数据
+        let imageUrl = bgImage
+        if (bgImage.startsWith('data:')) {
+          imageUrl = bgImage
+        }
+        
+        requestBody = {
+          model: 'doubao-seedream-4-0-250828',
+          prompt: imagePrompt,
+          image: [imageUrl],
+          size: selectedSize === 'portrait' ? '720x1280' : selectedSize === 'landscape' ? '1280x720' : '1024x1024',
+          response_format: 'b64_json'
+        }
+      } else {
+        // 没有背景图，使用文生图模式，生成完整海报
+        imagePrompt = `生成一张完整的${sizeName}海报，海报中包含文字内容`
+        
+        if (title.trim()) {
+          imagePrompt += `，标题文字为"${title}"`
+        }
+        if (content.trim()) {
+          imagePrompt += `，文案内容为"${content}"`
+        }
+        if (prompt.trim()) {
+          imagePrompt += `，${prompt}`
+        }
+        if (styleName) {
+          imagePrompt += `，${styleName}风格`
+        }
+        if (templateName) {
+          imagePrompt += `，${templateName}主题`
+        }
+        
+        imagePrompt += '，高质量，专业设计，精美海报，文字清晰可读，排版美观'
+        
+        requestBody = {
+          model: 'doubao-seedream-4-0-250828',
+          prompt: imagePrompt,
+          size: selectedSize === 'portrait' ? '720x1280' : selectedSize === 'landscape' ? '1280x720' : '1024x1024',
+          response_format: 'b64_json'
+        }
+      }
+
+      // 调用豆包API生成海报
+      const response = await fetch('https://ark.cn-beijing.volces.com/api/v3/images/generations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${DOUBAO_API_KEY}`
+        },
+        body: JSON.stringify(requestBody)
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error?.message || 'AI图像生成失败')
+      }
+
+      const imageData = await response.json()
+      let generatedImage = null
+      
+      // 优先使用base64格式，避免跨域问题
+      if (imageData.data && imageData.data[0] && imageData.data[0].b64_json) {
+        generatedImage = `data:image/png;base64,${imageData.data[0].b64_json}`
+      } else if (imageData.data && imageData.data[0] && imageData.data[0].url) {
+        // 如果只有URL，尝试转换为base64
+        try {
+          const imgResponse = await fetch(imageData.data[0].url)
+          const blob = await imgResponse.blob()
+          generatedImage = await new Promise((resolve) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve(reader.result)
+            reader.readAsDataURL(blob)
+          })
+        } catch (e) {
+          generatedImage = imageData.data[0].url
+        }
+      }
+
+      // 生成海报配置（简化版，只保存图片）
       const sizeConfig = SIZES.find(s => s.id === selectedSize) || SIZES[0]
-      // 优先使用风格配置的渐变色
-      const gradient = config.gradients[Math.floor(Math.random() * config.gradients.length)]
-      const fontSize = 36
-      const themeEmojis = parsed.theme?.emojis || []
       
-      const decoConfig = generateDecoConfig(decoration)
-      
-      const defaultElements = []
-      
-      if (title.trim()) { 
-        const titleSize = calculateTextBoxSize(title, fontSize)
-        defaultElements.push({ 
-          id: 'title', 
-          text: title, 
-          x: 50, 
-          y: 35, 
-          color: '#FFFFFF', 
-          fontSize, 
-          fontFamily: config.fonts[0], 
-          visible: true, 
-          rotation: 0, 
-          textAlign: 'center',
-          width: titleSize.width,
-          height: titleSize.height,
-          textStyle: config.textStyle
-        }) 
-      }
-      if (content.trim()) { 
-        const contentSize = calculateTextBoxSize(content, fontSize * 0.5)
-        defaultElements.push({ 
-          id: 'content', 
-          text: content, 
-          x: 50, 
-          y: 55, 
-          color: '#FFFFFF', 
-          fontSize: fontSize * 0.5, 
-          fontFamily: config.fonts[0], 
-          visible: true, 
-          rotation: 0, 
-          textAlign: 'center',
-          width: contentSize.width,
-          height: contentSize.height,
-          textStyle: config.textStyle
-        }) 
-      }
       const newPoster = { 
-        id: Date.now(), prompt, title, content, style: styleToUse, 
-        size: sizeConfig.id, gradient, decoration, decoConfig, bgImage,
-        emoji: selectedTemplate?.emoji || parsed.theme?.emoji, 
-        platformEmoji: selectedTemplate?.emoji || parsed.theme?.emoji || null,
-        themeEmojis, 
-        textElements: defaultElements, 
-        textStyle: config.textStyle,
+        id: Date.now(), 
+        prompt, 
+        title, 
+        content, 
+        style: selectedStyle, 
+        size: sizeConfig.id, 
+        bgImage: generatedImage,
         createdAt: new Date().toISOString(), 
         filter: 'none' 
       }
-      setPoster(newPoster); setTextElements(defaultElements); saveToHistory(newPoster); setHasGenerated(true)
-    } catch (err) { setError('生成失败，请重试') } finally { setIsGenerating(false) }
+      
+      setPoster(newPoster)
+      setHasGenerated(true)
+      saveToHistory(newPoster)
+    } catch (err) { 
+      console.error('生成错误:', err)
+      setError(err.message || 'AI生成失败，请重试')
+      setTimeout(() => setError(null), 5000)
+    } finally { 
+      setIsGenerating(false) 
+    }
   }
   
   const calculateTextBoxSize = (text, fontSize) => {
@@ -688,152 +667,18 @@ function App() {
   const handleTouchEnd = () => { dragItem.current = null; document.removeEventListener('touchmove', handleTouchMove); document.removeEventListener('touchend', handleTouchEnd) }
 
   const saveImageToGallery = () => {
-    if (!generatedImage) return
+    if (!poster || !poster.bgImage) return
     const link = document.createElement('a')
     link.download = `poster-${Date.now()}.png`
-    link.href = generatedImage
+    link.href = poster.bgImage
     link.click()
     setShowLongPressMenu(false)
   }
 
-  // 通用的截图函数，确保滤镜效果被应用
-  const capturePoster = async () => {
-    if (!posterRef.current) return null
-    
-    const currentFilter = poster?.filter || 'none'
-    
-    // 先截图
-    const canvas = await html2canvas(posterRef.current, { 
-      scale: 2, 
-      backgroundColor: null, 
-      logging: false,
-      useCORS: true,
-      allowTaint: true
-    })
-    
-    // 如果有滤镜，在 canvas 上应用
-    if (currentFilter !== 'none') {
-      const ctx = canvas.getContext('2d')
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-      const data = imageData.data
-      
-      // RGB 转 HSL
-      const rgbToHsl = (r, g, b) => {
-        r /= 255; g /= 255; b /= 255
-        const max = Math.max(r, g, b), min = Math.min(r, g, b)
-        let h, s, l = (max + min) / 2
-        
-        if (max === min) {
-          h = s = 0
-        } else {
-          const d = max - min
-          s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
-          switch (max) {
-            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break
-            case g: h = ((b - r) / d + 2) / 6; break
-            case b: h = ((r - g) / d + 4) / 6; break
-          }
-        }
-        return [h * 360, s * 100, l * 100]
-      }
-      
-      // HSL 转 RGB
-      const hslToRgb = (h, s, l) => {
-        h /= 360; s /= 100; l /= 100
-        let r, g, b
-        
-        if (s === 0) {
-          r = g = b = l
-        } else {
-          const hue2rgb = (p, q, t) => {
-            if (t < 0) t += 1
-            if (t > 1) t -= 1
-            if (t < 1/6) return p + (q - p) * 6 * t
-            if (t < 1/2) return q
-            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6
-            return p
-          }
-          const q = l < 0.5 ? l * (1 + s) : l + s - l * s
-          const p = 2 * l - q
-          r = hue2rgb(p, q, h + 1/3)
-          g = hue2rgb(p, q, h)
-          b = hue2rgb(p, q, h - 1/3)
-        }
-        return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)]
-      }
-      
-      switch(currentFilter) {
-        case 'grayscale':
-          // 胶片效果：轻微灰度 + 增加对比度 + 暖色调
-          for (let i = 0; i < data.length; i += 4) {
-            const r = data[i], g = data[i + 1], b = data[i + 2]
-            // 计算灰度值
-            const gray = (r * 0.299 + g * 0.587 + b * 0.114)
-            // 混合原色和灰度（70%灰度 + 30%原色）
-            const mixR = gray * 0.7 + r * 0.3
-            const mixG = gray * 0.7 + g * 0.3
-            const mixB = gray * 0.7 + b * 0.3
-            // 增加对比度
-            const contrast = 1.2
-            const finalR = Math.min(255, Math.max(0, contrast * (mixR - 128) + 128))
-            const finalG = Math.min(255, Math.max(0, contrast * (mixG - 128) + 128))
-            const finalB = Math.min(255, Math.max(0, contrast * (mixB - 128) + 128))
-            // 添加轻微暖色调
-            data[i] = Math.min(255, finalR * 1.05)
-            data[i + 1] = finalG
-            data[i + 2] = Math.min(255, finalB * 0.95)
-          }
-          break
-        case 'brightness':
-          for (let i = 0; i < data.length; i += 4) {
-            data[i] = Math.min(255, data[i] * 1.2)
-            data[i + 1] = Math.min(255, data[i + 1] * 1.2)
-            data[i + 2] = Math.min(255, data[i + 2] * 1.2)
-          }
-          break
-        case 'contrast':
-          const factor = 1.5
-          for (let i = 0; i < data.length; i += 4) {
-            data[i] = Math.min(255, Math.max(0, factor * (data[i] - 128) + 128))
-            data[i + 1] = Math.min(255, Math.max(0, factor * (data[i + 1] - 128) + 128))
-            data[i + 2] = Math.min(255, Math.max(0, factor * (data[i + 2] - 128) + 128))
-          }
-          break
-        case 'hue':
-          for (let i = 0; i < data.length; i += 4) {
-            const [h, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2])
-            // 旋转 90 度
-            const newH = (h + 90) % 360
-            const [r, g, b] = hslToRgb(newH, s, l)
-            data[i] = r
-            data[i + 1] = g
-            data[i + 2] = b
-          }
-          break
-      }
-      
-      ctx.putImageData(imageData, 0, 0)
-    }
-    
-    return canvas.toDataURL('image/png')
-  }
-
   const showDownloadModal = async () => {
-    if (!posterRef.current) return
-    const prevSelectedText = selectedText
-    setSelectedText(null)
-    
-    try {
-      await new Promise(resolve => setTimeout(resolve, 50))
-      const dataUrl = await capturePoster()
-      if (dataUrl) {
-        setGeneratedImage(dataUrl)
-        setShowLongPressMenu(true)
-      }
-    } catch (err) {
-      setError('生成图片失败，请重试')
-      setSelectedText(prevSelectedText)
-    }
+    if (!poster || !poster.bgImage) return
+    setGeneratedImage(poster.bgImage)
+    setShowLongPressMenu(true)
   }
 
   const downloadPoster = async () => {
@@ -854,12 +699,11 @@ function App() {
   }
 
   const shareToPlatform = async (platform) => {
-    if (!posterRef.current) return
+    if (!poster || !poster.bgImage) return
     setShowShare(false)
     
     try {
-      const dataUrl = await capturePoster()
-      if (!dataUrl) return
+      const dataUrl = poster.bgImage
       
       // 检测是否在微信中
       if (isWeixin()) {
@@ -1076,12 +920,12 @@ const FILTER_NAMES = { none: '原图', grayscale: '胶片', brightness: '明亮'
           </div>
 
           <div className="input-group">
-            <label className="input-label required">海报标题</label>
+            <label className="input-label">海报标题（非必填）</label>
             <input type="text" className="text-input" placeholder="例如：开业大吉、全场5折" value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
 
           <div className="input-group">
-            <label className="input-label">海报文案</label>
+            <label className="input-label">海报文案（非必填）</label>
             <textarea className="content-input" placeholder="例如：限时优惠、欢迎选购" value={content} onChange={(e) => setContent(e.target.value)} rows={2} />
           </div>
 
@@ -1091,7 +935,7 @@ const FILTER_NAMES = { none: '原图', grayscale: '胶片', brightness: '明亮'
           </div>
 
           <div className="input-group">
-            <label className="input-label">上传背景图片（非必填）</label>
+            <label className="input-label">上传背景图片（非必填，不上传则AI自动生成）</label>
             <div className="bg-upload-area">
               <input type="file" ref={bgInputRef} accept="image/*" onChange={handleBgUpload} style={{ display: 'none' }} />
               {bgImage ? (
@@ -1130,7 +974,7 @@ const FILTER_NAMES = { none: '原图', grayscale: '胶片', brightness: '明亮'
           </div>
 
           <button className={`generate-btn ${isGenerating ? 'loading' : ''}`} onClick={generatePoster} disabled={isGenerating}>
-            {isGenerating ? (<><span className="loading-spinner"></span>正在生成...</>) : (<>🚀 生成海报</>)}
+            {isGenerating ? (<><span className="loading-spinner"></span>AI生成中...</>) : (<>🎨 生成AI海报</>)}
           </button>
           {error && <motion.div className="error-message" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>{error}</motion.div>}
         </section>
@@ -1141,94 +985,15 @@ const FILTER_NAMES = { none: '原图', grayscale: '胶片', brightness: '明亮'
               <div className="result-header"><h2>生成结果</h2></div>
 
               <div className="poster-container" onContextMenu={(e) => e.preventDefault()}>
-                <div className="poster" ref={posterRef} style={{ filter: getFilterStyle(poster.filter), aspectRatio: SIZES.find(s => s.id === poster.size)?.ratio || PLATFORMS.find(p => p.id === poster.platform)?.ratio }}>
-                  {poster.bgImage ? (
-                    <>
-                      <img src={poster.bgImage} alt="背景" className="poster-bg-image" />
-                      <div className="poster-bg-overlay" style={{ background: `linear-gradient(135deg, ${poster.gradient.join(', ')})` }}></div>
-                      <div className="poster-vignette"></div>
-                      {renderDecoration(poster.decoration, poster.decoConfig)}
-                    </>
-                  ) : (
-                    <div className="poster-bg" style={{ background: `linear-gradient(135deg, ${poster.gradient.join(', ')})` }}>{renderDecoration(poster.decoration, poster.decoConfig)}</div>
-                  )}
-                  {poster.platformEmoji && <div className="poster-platform-badge">{poster.platformEmoji}</div>}
-                  <div className="poster-emoji">{poster.emoji}</div>
-                  {poster.themeEmojis && poster.themeEmojis.length > 0 && (
-                    <div className="theme-emojis">
-                      {poster.themeEmojis.map((emoji, i) => (
-                        <span key={i} className="theme-emoji" style={{ 
-                          left: `${5 + (i * 22)}%`, 
-                          top: `${10 + (i % 3) * 30}%`,
-                          opacity: 0.12,
-                          fontSize: `${48 + (i * 8)}px`
-                        }}>{emoji}</span>
-                      ))}
-                    </div>
-                  )}
-                  {dragGuideLine.show && dragGuideLine.x && <div className="drag-guide-line vertical" style={{ left: dragGuideLine.x }} />}
-                  {textElements.map(element => element.visible !== false && (
-                    <div key={element.id} 
-                      className={`text-box ${selectedText === element.id && !isConfirmed ? 'selected' : ''}`}
-                      style={{ 
-                        left: `calc(${element.x}% - ${element.width ? element.width / 2 : 0}px)`, 
-                        top: `calc(${element.y}% - ${element.height ? element.height / 2 : 0}px)`, 
-                        color: element.color, 
-                        fontSize: `${element.fontSize}px`, 
-                        fontFamily: element.fontFamily, 
-                        transform: `rotate(${element.rotation || 0}deg)`,
-                        textAlign: element.textAlign || 'center',
-                        cursor: isConfirmed ? 'default' : 'move',
-                        width: element.width ? `${element.width}px` : 'auto',
-                        height: element.height ? `${element.height}px` : 'auto',
-                        textShadow: poster.textStyle?.shadow || '0 2px 8px rgba(0, 0, 0, 0.5)',
-                        fontWeight: poster.textStyle?.weight || '400'
-                      }}
-                      onMouseDown={(e) => !isConfirmed && handleTextMouseDown(e, element)}
-                      onTouchStart={(e) => !isConfirmed && handleTextMouseDown(e, element)}
-                      onClick={() => !isConfirmed && setSelectedText(element.id)}>
-                      <span className="text-content">{element.text}</span>
-                    </div>
-                  ))}
+                <div className="poster" ref={posterRef} style={{ aspectRatio: SIZES.find(s => s.id === poster.size)?.ratio }}>
+                  <img src={poster.bgImage} alt="AI生成的海报" className="poster-ai-image" />
                 </div>
               </div>
 
-              {!isConfirmed && selectedElement && (
-                <div className="edit-panel">
-                  <div className="edit-row edit-text-row">
-                    <span className="edit-label">文案:</span>
-                    <textarea 
-                      className="text-edit-input" 
-                      value={selectedElement.text}
-                      onChange={(e) => updateTextElement(selectedElement.id, { text: e.target.value })}
-                      rows={3}
-                      placeholder="输入文案，支持换行"
-                    />
-                  </div>
-                  <div className="edit-row"><span className="edit-label">颜色:</span><div className="color-picker">{COLORS.map(color => (<button key={color} className={`color-btn ${selectedElement.color === color ? 'active' : ''}`} style={{ background: color }} onClick={() => updateTextElement(selectedElement.id, { color })} />))}</div></div>
-                  <div className="edit-row"><span className="edit-label">字体:</span><select className="font-select" value={selectedElement.fontFamily} onChange={(e) => updateTextElement(selectedElement.id, { fontFamily: e.target.value })}>{FONTS.map(font => (<option key={font.name} value={font.value}>{font.name}</option>))}</select></div>
-                  <div className="edit-row"><span className="edit-label">大小:</span><select className="font-select" value={selectedElement.fontSize} onChange={(e) => updateTextElement(selectedElement.id, { fontSize: parseInt(e.target.value) })}>{FONTSIZES.map(size => (<option key={size} value={size}>{size}px</option>))}</select></div>
-                  <div className="edit-row">
-                    <span className="edit-label">旋转:</span>
-                    <div className="rotation-picker">
-                      <button className="rotate-btn" onClick={() => updateTextElement(selectedElement.id, { rotation: 0 })}>⊥ 重置</button>
-                      <button className="rotate-btn" onClick={() => updateTextElement(selectedElement.id, { rotation: (selectedElement.rotation || 0) + 15 })}>↻ +15°</button>
-                    </div>
-                  </div>
-                  <div className="edit-row"><button className="reset-btn" onClick={() => resetTextPosition(selectedElement.id)}>↺ 位置重置</button></div>
-                </div>
-              )}
-
-              {!isConfirmed && (
-                <>
-                  <div className="filter-bar"><span className="filter-label">滤镜:</span><div className="filter-options">{['none', 'grayscale', 'brightness', 'contrast', 'hue'].map(f => (<button key={f} className={`filter-btn ${filter === f ? 'active' : ''}`} onClick={() => applyFilter(f)}>{FILTER_NAMES[f]}</button>))}</div></div>
-
-                  <div className="action-buttons">
-                    <button className="action-btn" onClick={() => setShowShare(true)}>📤 一键分享</button>
-                    <button className="action-btn primary" onClick={showDownloadModal}>💾 下载保存</button>
-                  </div>
-                </>
-              )}
+              <div className="action-buttons">
+                <button className="action-btn" onClick={() => setShowShare(true)}>📤 一键分享</button>
+                <button className="action-btn primary" onClick={showDownloadModal}>💾 下载保存</button>
+              </div>
               {shareResult && (
                 <div className="share-result">{shareResult}</div>
               )}
